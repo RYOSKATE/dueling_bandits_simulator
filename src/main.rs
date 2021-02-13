@@ -67,6 +67,9 @@ fn main() {
     // 総合結果
     let mut results: Vec<SimulationResult> = vec![];
 
+    let mut wtr = csv::Writer::from_path(RESULTS_FILENAME).expect("Fail to open results file");;
+    wtr.write_record(SimulationResult::toHeaderString().iter().map(|x| x.to_string())).expect("Fail to write results");;
+
     // チューニング対象パラメータ
     for num_of_evaluate in 1..4 {
         for _probability_of_random_select in 0..11 {
@@ -118,10 +121,12 @@ fn main() {
 
                                 // ボルダ勝者用ThompsonSampling法で組み合わせを決定
                                 let (left, _right) = num_of_fights.split_at(n);
-                                let mut duelist1: Option<usize> = None;
-                                let mut duelist2: Option<usize> = None;
+                                let mut duelist1: Option<usize>;
+                                let mut duelist2: Option<usize>;
 
                                 loop {
+                                    duelist1 = None;
+                                    duelist2 = None;
                                     // 未比較の決闘者なら最優先で選ばれる
                                     for (i, &v) in left.iter().enumerate() {
                                         if v == 0 {
@@ -270,16 +275,24 @@ fn main() {
                     let result = SimulationResult { num_of_evaluate, probability_of_random_select, reward_winner, reward_loser, nDCG: average_nDCG };
                     result.print();
                     results.push(result);
+                    wtr.write_record(&[result.num_of_evaluate.to_string(),
+                        result.probability_of_random_select.to_string(),
+                        result.reward_winner.to_string(),
+                        result.reward_loser.to_string(),
+                        result.nDCG.to_string()]).expect("Fail to write result");
+                    wtr.flush().expect("Fail to flush results");
                 }
             }
         }
     }
+    wtr.flush().expect("Fail to flush results");
+
     println!("シミュレーション終了。結果をソートし出力。");
     results.sort_by(|a, b| b.nDCG.partial_cmp(&a.nDCG).unwrap());
     for result in results.iter() {
         result.print();
     }
-    write_results_to_csv(&results, RESULTS_FILENAME).expect("Fail to write results");
+    //write_results_to_csv(&results, RESULTS_FILENAME).expect("Fail to write results");
 }
 
 fn calc_DCG(duelists: &Vec<Duelist>) -> f64 {
