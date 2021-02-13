@@ -1,233 +1,331 @@
-use rand::distributions::{Normal, Beta, Distribution};
+use rand::distributions::{Normal, Beta, Distribution, Open01};
 use rand::thread_rng;
 use rand::Rng;
-
-fn main() {
-    const NUM_OF_PARTICIPANTS: usize = 30;
-    let simulator: Simulator = Simulator::new(NUM_OF_PARTICIPANTS);
-    simulator.run();
-}
+use rayon::prelude::*;
+use array_macro::*;
 
 #[derive(Copy, Clone)]
-pub struct BetaDistrubutionParameters {
+struct Duelist {
+    submission_order: usize,
+    ideal_borda_score: f64,
+    real_borda_score: f64,
     alpha: f64,
     beta: f64,
 }
 
-pub struct Duelist {
-    ideal_borda_score: f64,
-    real_borda_score: f64,
-    submission_order: usize,
-}
-
-pub struct Simulator {
-    num_of_participants: usize,
-    ideal_winning_percentages_matrix: Vec<Vec<f64>>,
-}
-
-impl Simulator {
-    pub fn new(num_of_participants: usize) -> Self
-    {
-        let winning_percentages_matrix = make_random_matrix_data(num_of_participants, 50.0, 16.0);
-        let winning_percentages_matrix_filename = String::from("winning_percentages_matrix.csv");
-        Simulator::write_matrix_to_csv(&winning_percentages_matrix, &winning_percentages_matrix_filename).expect("Fail to write winning_percentages_matrix");
-
-        Simulator {
-            num_of_participants,
-            ideal_winning_percentages_matrix:winning_percentages_matrix,
-        }
+impl Duelist {
+    pub fn new(submission_order: usize) -> Self{
+        Duelist{submission_order, ideal_borda_score:0.0, real_borda_score:0.0, alpha:1.0, beta:1.0}
     }
-
-    pub fn run(&self) {
+    pub fn generate(num_of_participants: usize) -> Vec<Duelist>{
         let mut duelists:Vec<Duelist> = vec![];
-        duelists.reserve(self.num_of_participants);
-        for (submission_order, winning_percentages) in self.ideal_winning_percentages_matrix.iter().enumerate() {
-            let mut num_of_not_none:f64 = 0.0;
-            let mut sum:f64 = 0.0;
-            for &winning_percentage in winning_percentages.iter() {
-                num_of_not_none += 1.0;
-                sum += winning_percentage;
-            }
-            let ideal_borda_score = sum / num_of_not_none;
-            duelists.push(Duelist{ideal_borda_score, submission_order, real_borda_score:0.0});
+        duelists.reserve(num_of_participants);
+        for n in 0..num_of_participants{
+            duelists.push(Duelist::new(n));
         }
-
-        println!("ideal_borda_score");
-        for duelist in duelists.iter() {
-            print!("{}, ",duelist.ideal_borda_score);
-        }
-        println!("");
-
-        let mut beta_distrubution_parameters = vec![BetaDistrubutionParameters{alpha:1.0, beta:1.0};self.num_of_participants];
-
-        // チューニング対象パラメータ
-        let num_of_evaluate = 3;
-        // Probability of randomly selecting a participant
-        let probability_of_random_select = 0.3;
-        let reward_winner = 1.0;
-        let reward_loser = 1.0;
-        let mut num_of_fights: Vec<usize> = vec![0; self.num_of_participants];
-
-        // 結果
-        let mut real_results_table = vec![vec![0;self.num_of_participants];self.num_of_participants];
-        let mut real_winning_percentages_matrix = vec![vec![None;self.num_of_participants];self.num_of_participants];
-
-
-        let mut rng = rand::thread_rng();
-        // nが増える＝新たな提出者＆評価(+1は最後の一人提出後の先生評価)
-        for n in 2..self.num_of_participants + 1 {
-            for _round in 0..num_of_evaluate {
-                let (left, _right) = num_of_fights.split_at(n);
-                let mut duelist1: Option<usize> = None;
-                let mut duelist2: Option<usize> = None;
-
-                // まだ1回もバトルしていない腕なら最優先で選ばれる
-                for (i, &v) in left.iter().enumerate() {
-                    if v == 0 {
-                        if duelist1 == None {
-                            duelist1 = Some(i);
-                        } else if duelist2 == None {
-                            duelist2 = Some(i);
-                            break;
-                        }
-                    }
-                }
-
-                // 未対戦の腕が0もしくは1つだけだった場合
-                if duelist1 == None || duelist2 == None {
-
-                    // デュエルする2本の腕を選ぶ
-                    if rng.gen::<f64>() <= probability_of_random_select {
-                        // 完全にランダムで選ぶ場合
-                        if duelist1 == None {
-                            duelist1 = Some(rng.gen_range(0, n));
-                        }
-                        while duelist2 == None || duelist1 == duelist2 {
-                            duelist2 = Some(rng.gen_range(0, n));
-                        }
-                    } else {
-                        // 過去の情報に基づいて選ぶ場合
-                        if duelist1 == None {
-                            let mut sample = 0.0;
-                            for i in 0..n {
-                                let beta = Beta::new(beta_distrubution_parameters[i].alpha, beta_distrubution_parameters[i].beta);
-                                let v = beta.sample(&mut thread_rng());
-                                if sample < v {
-                                    sample = v;
-                                    duelist1 = Some(i);
-                                }
-                            }
-                        }
-                        while duelist2 == None || duelist1 == duelist2 {
-                            let mut sample = 0.0;
-                            for i in 0..n {
-                                let beta = Beta::new(beta_distrubution_parameters[i].alpha, beta_distrubution_parameters[i].beta);
-                                let v = beta.sample(&mut thread_rng());
-                                if sample < v {
-                                    sample = v;
-                                    duelist2 = Some(i);
-                                }
-                            }
-                        }
-                    }
-                }
-                let duelist1 = duelist1.unwrap();
-                let duelist2 = duelist2.unwrap();
-                num_of_fights[duelist1] += 1;
-                num_of_fights[duelist2] += 1;
-                println!("duelist: {}, {} ", duelist1, duelist2);
-
-                if rng.gen::<f64>() <= self.ideal_winning_percentages_matrix[duelist1][duelist2] {
-                    beta_distrubution_parameters[duelist1].alpha += reward_winner;
-                    beta_distrubution_parameters[duelist2].beta += reward_loser;
-                    real_results_table[duelist1][duelist2] += 1;
-                } else {
-                    beta_distrubution_parameters[duelist2].alpha += reward_winner;
-                    beta_distrubution_parameters[duelist1].beta += reward_loser;
-                    real_results_table[duelist2][duelist1] += 1;
-                }
-            }
-        }
-        println!("real_results_table");
-        for j in 0..real_results_table.len() {
-            for i in 0..real_results_table.len() {
-                print!("{}, ", real_results_table[j][i]);
-            }
-            println!("{}", num_of_fights[j]);
-        }
-        println!("");
-        for j in 0..real_results_table.len() {
-            for i in 0..real_results_table.len() {
-                let num_of_win = real_results_table[j][i];
-                let num_of_lose = real_results_table[i][j];
-                if 0 <  num_of_win || 0 < num_of_lose{
-                    let winning_percentages = (num_of_win as f64) / ((num_of_win + num_of_lose) as f64);
-                    println!("num_of_win:{},num_of_lose:{},winning_percentages:{}",num_of_win,num_of_lose,winning_percentages);
-                    real_winning_percentages_matrix[j][i] = Some(winning_percentages);
-                    real_winning_percentages_matrix[i][j] = Some(1.0 - winning_percentages);
-                }
-            }
-        }
-        println!("real_winning_percentages_matrix");
-        for j in 0..real_winning_percentages_matrix.len() {
-            for i in 0..real_winning_percentages_matrix.len() {
-                if real_winning_percentages_matrix[j][i] == None {
-                    print!("{}, ", 0);
-                } else {
-                    print!("{}, ", real_winning_percentages_matrix[j][i].unwrap());
-                }
-            }
-            println!("");
-        }
-
-
-        for (submission_order, winning_percentages) in real_winning_percentages_matrix.iter().enumerate() {
-            let mut num_of_not_none:f64 = 0.0;
-            let mut sum:f64 = 0.0;
-            for &winning_percentage in winning_percentages.iter() {
-                if winning_percentage.is_some() {
-                    num_of_not_none += 1.0;
-                    sum += winning_percentage.unwrap();
-                }
-            }
-            duelists[submission_order].real_borda_score = sum / num_of_not_none;
-        }
-        println!("real_borda_score");
-        for duelist in duelists.iter() {
-            print!("{}, ",duelist.real_borda_score);
-        }
-        println!("");
-        for duelist in duelists.iter() {
-            println!("{},{},{}",duelist.submission_order, duelist.ideal_borda_score,duelist.ideal_borda_score);
-        }
-
-
-        duelists.sort_by(|a, b| b.ideal_borda_score.partial_cmp(&a.ideal_borda_score).unwrap());
-        let mut iDCG = duelists.first().unwrap().ideal_borda_score;
-        for i in 2..duelists.len() {
-            iDCG += duelists[i - 1].ideal_borda_score / (i as f64).log2();
-        }
-        println!("iDCG={}",iDCG);
-        let mut rDCG = duelists.first().unwrap().real_borda_score;
-        for i in 2..duelists.len() {
-            rDCG += duelists[i - 1].real_borda_score / (i as f64).log2();
-        }
-        println!("rDCG={}",rDCG);
-        let nDCG = rDCG / iDCG;
-        println!("nDCG={}",nDCG);
-    }
-
-    fn write_matrix_to_csv(matrix: &Vec<Vec<f64>>, filename: &String) -> Result<(), std::io::Error> {
-        let mut wtr = csv::Writer::from_path(&filename)?;
-        for values in matrix.iter() {
-            wtr.write_record(values.iter().map(|x| x.to_string()))?;
-        }
-        wtr.flush()?;
-        Ok(())
+        duelists
     }
 }
 
-pub fn make_random_matrix_data(size: usize, mean: f64, stddev: f64) ->Vec<Vec<f64>>
+#[derive(Copy, Clone)]
+struct SimulationResult {
+    num_of_evaluate: i32,
+    probability_of_random_select: f64,
+    reward_winner: f64,
+    reward_loser: f64,
+    nDCG: f64,
+}
+
+impl SimulationResult {
+    pub fn print(&self) {
+        println!("1人の評価数={}, ランダム対戦の割合={}, 勝者の報酬={}, 敗者の報酬={}, nDCG={}", self.num_of_evaluate, self.probability_of_random_select, self.reward_winner, self.reward_loser, self.nDCG);
+    }
+    pub fn toHeaderString() -> [&'static str;5]  {
+        return ["1人の評価数","ランダム対戦の割合","勝者の報酬","敗者の報酬","nDCG"];
+    }
+}
+
+
+fn calc_borda_score(winning_percentages: &Vec<f64>) -> f64 {
+    let mut num_of_not_none:f64 = 0.0;
+    let mut sum:f64 = 0.0;
+    for &winning_percentage in winning_percentages.iter() {
+        num_of_not_none += 1.0;
+        sum += winning_percentage;
+    }
+    sum / num_of_not_none
+}
+
+fn main() {
+    // 定数
+    const IDEAL_WINNING_PERCENTAGES_MATRIX_FILENAME: &str = "ideal_winning_percentages_matrix.csv";
+    const REAL_WINNING_PERCENTAGES_MATRIX_FILENAME:&str = "real_winning_percentages_matrix.csv";
+    const RESULTS_FILENAME:&str = "resutls.csv";
+    const NUM_OF_PARTICIPANTS: usize = 30;
+    const NUM_OF_SIMURATION: usize = 100;
+
+    // 総合結果
+    let mut results: Vec<SimulationResult> = vec![];
+
+    // チューニング対象パラメータ
+    for num_of_evaluate in 1..4 {
+        for _probability_of_random_select in 0..11 {
+            for _reward_winner in 1..31 {
+                for _reward_loser in 1..31 {
+                    let probability_of_random_select = _probability_of_random_select as f64 / 10.0;
+                    let reward_winner = _reward_winner as f64 / 10.0;
+                    let reward_loser = _reward_loser as f64 / 10.0;
+
+                    let mut nDCGs: Vec<f64> = vec![];
+                    nDCGs.reserve(NUM_OF_SIMURATION);
+                    for _simulation in 0..NUM_OF_SIMURATION {
+                        // シミュレーション用データ
+                        let ideal_winning_percentages_matrix = make_random_matrix_data(NUM_OF_PARTICIPANTS, 50.0, 16.0);
+                        let mut real_winning_percentages_matrix = vec![vec![None; NUM_OF_PARTICIPANTS]; NUM_OF_PARTICIPANTS];
+                        let mut real_duel_results_table = vec![vec![0; NUM_OF_PARTICIPANTS]; NUM_OF_PARTICIPANTS];
+                        let mut duelists: Vec<Duelist> = Duelist::generate(NUM_OF_PARTICIPANTS);
+                        let mut num_of_fights: Vec<usize> = vec![0; NUM_OF_PARTICIPANTS];
+
+                        for (i, winning_percentages) in ideal_winning_percentages_matrix.iter().enumerate() {
+                            duelists[i].ideal_borda_score = calc_borda_score(winning_percentages);
+                        }
+
+                        // println!("ideal_borda_score");
+                        // for duelist in duelists.iter() {
+                        //     print!("{}, ",duelist.ideal_borda_score);
+                        // }
+                        // println!();
+
+                        // 結果
+
+                        let mut rng = rand::thread_rng();
+                        // nが増える＝新たな提出者＆評価(+1は最後の一人提出後の先生評価)
+                        for n in 2..NUM_OF_PARTICIPANTS + 1 {
+                            let mut matchups_table = vec![vec![false; n]; n];
+                            for _round in 0..num_of_evaluate {
+
+                                // 比較回数が組み合わせの総数より多くなる場合は終了
+                                if n == 2 && 1 <= _round {
+                                    break;
+                                } else if n == 3 && 3 <= _round {
+                                    break;
+                                } else if n == 4 && 6 <= _round {
+                                    break;
+                                } else if n == 5 && 10 <= _round {
+                                    break;
+                                }
+                                // 1人に10回以上比較させることはまず無いのでここまで。
+
+                                // ボルダ勝者用ThompsonSampling法で組み合わせを決定
+                                let (left, _right) = num_of_fights.split_at(n);
+                                let mut duelist1: Option<usize> = None;
+                                let mut duelist2: Option<usize> = None;
+
+                                loop {
+                                    // 未比較の決闘者なら最優先で選ばれる
+                                    for (i, &v) in left.iter().enumerate() {
+                                        if v == 0 {
+                                            if duelist1 == None {
+                                                duelist1 = Some(i);
+                                            } else if duelist2 == None {
+                                                duelist2 = Some(i);
+                                                break;
+                                            }
+                                        }
+                                    }
+
+                                    // 未比較の決闘者が0もしくは1つだけだった場合
+                                    if duelist1 == None || duelist2 == None {
+
+                                        // 比較する2つの決闘者を選ぶ
+                                        if rng.gen::<f64>() <= probability_of_random_select {
+                                            // 完全にランダムで選ぶ場合
+                                            if duelist1 == None {
+                                                duelist1 = Some(rng.gen_range(0, n));
+                                            }
+                                            while duelist2 == None || duelist1 == duelist2 {
+                                                duelist2 = Some(rng.gen_range(0, n));
+                                            }
+                                        } else {
+                                            // 過去の情報に基づいて選ぶ場合
+                                            if duelist1 == None {
+                                                let mut sample = 0.0;
+                                                for i in 0..n {
+                                                    let beta = Beta::new(duelists[i].alpha, duelists[i].beta);
+                                                    let v = beta.sample(&mut thread_rng());
+                                                    if sample < v {
+                                                        sample = v;
+                                                        duelist1 = Some(i);
+                                                    }
+                                                }
+                                            }
+                                            while duelist2 == None || duelist1 == duelist2 {
+                                                let mut sample = 0.0;
+                                                for i in 0..n {
+                                                    let beta = Beta::new(duelists[i].alpha, duelists[i].beta);
+                                                    let v = beta.sample(&mut thread_rng());
+                                                    if sample < v {
+                                                        sample = v;
+                                                        duelist2 = Some(i);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // 決定した組み合わせで比較実施
+                                    let duelist1 = duelist1.unwrap();
+                                    let duelist2 = duelist2.unwrap();
+
+                                    // その人が既に評価済みの組み合わせは選ばない
+                                    if !matchups_table[duelist1][duelist2] {
+                                        break;
+                                    }
+                                }
+                                // 決定した組み合わせで比較実施
+                                let duelist1 = duelist1.unwrap();
+                                let duelist2 = duelist2.unwrap();
+                                matchups_table[duelist1][duelist2] = true;
+                                matchups_table[duelist2][duelist1] = true;
+                                num_of_fights[duelist1] += 1;
+                                num_of_fights[duelist2] += 1;
+
+                                // println!("duelist: {}, {} ", duelist1, duelist2);
+
+                                if rng.gen::<f64>() <= ideal_winning_percentages_matrix[duelist1][duelist2] {
+                                    duelists[duelist1].alpha += reward_winner;
+                                    duelists[duelist2].beta += reward_loser;
+                                    real_duel_results_table[duelist1][duelist2] += 1;
+                                } else {
+                                    duelists[duelist2].alpha += reward_winner;
+                                    duelists[duelist1].beta += reward_loser;
+                                    real_duel_results_table[duelist2][duelist1] += 1;
+                                }
+                            }
+                        }
+
+                        // シミュレーション結果確認
+                        // println!("real_results_table");
+                        // for j in 0..real_duel_results_table.len() {
+                        //     for i in 0..real_duel_results_table.len() {
+                        //         print!("{}, ", real_duel_results_table[j][i]);
+                        //     }
+                        //     println!("{}", num_of_fights[j]);
+                        // }
+                        // println!();
+                        for j in 0..real_duel_results_table.len() {
+                            for i in 0..real_duel_results_table.len() {
+                                let num_of_win = real_duel_results_table[j][i];
+                                let num_of_lose = real_duel_results_table[i][j];
+                                if 0 < num_of_win || 0 < num_of_lose {
+                                    let winning_percentages = (num_of_win as f64) / ((num_of_win + num_of_lose) as f64);
+                                    // println!("num_of_win:{},num_of_lose:{},winning_percentages:{}", num_of_win, num_of_lose, winning_percentages);
+                                    real_winning_percentages_matrix[j][i] = Some(winning_percentages);
+                                    real_winning_percentages_matrix[i][j] = Some(1.0 - winning_percentages);
+                                }
+                            }
+                        }
+                        // println!("real_winning_percentages_matrix");
+                        // for j in 0..real_winning_percentages_matrix.len() {
+                        //     for i in 0..real_winning_percentages_matrix.len() {
+                        //         if real_winning_percentages_matrix[j][i] == None {
+                        //             print!("{}, ", 0);
+                        //         } else {
+                        //             print!("{}, ", real_winning_percentages_matrix[j][i].unwrap());
+                        //         }
+                        //     }
+                        //     println!();
+                        // }
+
+
+                        for (submission_order, winning_percentages) in real_winning_percentages_matrix.iter().enumerate() {
+                            duelists[submission_order].real_borda_score = calc_borda_score(&winning_percentages.iter().filter(|x| x.is_some()).map(|v| v.unwrap()).collect())
+                        }
+                        // println!("real_borda_score");
+                        // for duelist in duelists.iter() {
+                        //     print!("{}, ", duelist.real_borda_score);
+                        // }
+                        // println!();
+
+                        duelists.sort_by(|a, b| b.real_borda_score.partial_cmp(&a.real_borda_score).unwrap());
+                        let rDCG = calc_DCG(&duelists);
+
+                        duelists.sort_by(|a, b| b.ideal_borda_score.partial_cmp(&a.ideal_borda_score).unwrap());
+                        let iDCG = calc_DCG(&duelists);
+
+                        let nDCG = rDCG / iDCG;
+                        // println!("rDCG={}, iDCG={}, nDCG={}", rDCG, iDCG, nDCG);
+                        //
+                        // println!("#,ideal_borda_score,real_borda_score");
+                        // for duelist in duelists.iter() {
+                        //     println!("{},{},{}", duelist.submission_order, duelist.ideal_borda_score, duelist.real_borda_score);
+                        //}
+                        nDCGs.push(nDCG);
+
+                        //write_matrix_to_csv(&ideal_winning_percentages_matrix, IDEAL_WINNING_PERCENTAGES_MATRIX_FILENAME).expect("Fail to write ideal_winning_percentages_matrix");
+                        //write_matrix_to_csv(&real_winning_percentages_matrix, REAL_WINNING_PERCENTAGES_MATRIX_FILENAME).expect("Fail to write real_winning_percentages_matrix");
+                    }
+                    let average_nDCG: f64 = nDCGs.iter().sum::<f64>() / (nDCGs.len() as f64);
+                    // println!("average_nDCG={}", average_nDCG);
+                    let result = SimulationResult { num_of_evaluate, probability_of_random_select, reward_winner, reward_loser, nDCG: average_nDCG };
+                    result.print();
+                    results.push(result);
+                }
+            }
+        }
+    }
+    println!("シミュレーション終了。結果をソートし出力。");
+    results.sort_by(|a, b| b.nDCG.partial_cmp(&a.nDCG).unwrap());
+    for result in results.iter() {
+        result.print();
+    }
+    write_results_to_csv(&results, RESULTS_FILENAME).expect("Fail to write results");
+}
+
+fn calc_DCG(duelists: &Vec<Duelist>) -> f64 {
+    calc_DCG2(duelists)
+}
+
+// そこそこの適合度の要素に対する予測優先
+fn calc_DCG1(duelists: &Vec<Duelist>) -> f64 {
+    let mut DCG = duelists.first().unwrap().ideal_borda_score;
+    for i in 2..duelists.len() {
+        let rel_i = duelists[i - 1].ideal_borda_score;
+        DCG +=  rel_i / (i as f64).log2();
+    }
+    DCG
+}
+
+// 高い適合度の要素に対する予測優先
+fn calc_DCG2(duelists: &Vec<Duelist>) -> f64 {
+    let mut DCG:f64 = 0.0;
+    for i in 1..duelists.len() {
+        let rel_i = duelists[i - 1].ideal_borda_score * 10.0;
+        DCG += (2.0_f64.powf(rel_i) - 1.0) / (i as f64 + 1.0).log2();
+    }
+    DCG
+}
+
+fn write_matrix_to_csv(matrix: &Vec<Vec<f64>>, filename: &str) -> Result<(), std::io::Error> {
+    let mut wtr = csv::Writer::from_path(&filename)?;
+    for values in matrix.iter() {
+        wtr.write_record(values.iter().map(|x| x.to_string()))?;
+    }
+    wtr.flush()?;
+    Ok(())
+}
+
+fn write_results_to_csv(results: &Vec<SimulationResult>, filename: &str) -> Result<(), std::io::Error> {
+    let mut wtr = csv::Writer::from_path(&filename)?;
+    wtr.write_record(SimulationResult::toHeaderString().iter().map(|x| x.to_string()))?;
+    for result in results.iter() {
+        wtr.write_record(&[result.num_of_evaluate.to_string(),result.probability_of_random_select.to_string(), result.reward_winner.to_string(), result.reward_winner.to_string(), result.nDCG.to_string()])?;
+    }
+    wtr.flush()?;
+    Ok(())
+}
+
+fn make_random_matrix_data(size: usize, mean: f64, stddev: f64) ->Vec<Vec<f64>>
 {
     let mut scores = vec![0.0;size];
 
@@ -247,11 +345,19 @@ pub fn make_random_matrix_data(size: usize, mean: f64, stddev: f64) ->Vec<Vec<f6
             }
         }
     }
-    for winning_percentages in winning_percentages_matrix.iter() {
-        for winning_percentage in winning_percentages.iter() {
-            print!("{}, ",winning_percentage);
-        }
-        println!();
-    }
+    // for winning_percentages in winning_percentages_matrix.iter() {
+    //     for winning_percentage in winning_percentages.iter() {
+    //         print!("{}, ",winning_percentage);
+    //     }
+    //     println!();
+    // }
     winning_percentages_matrix
+}
+
+// n個からk個を取り出す組み合わせの数
+pub fn binom_knuth(n: i32, k: i32) -> i32 {
+    (0..n + 1)
+        .rev()
+        .zip(1..k + 1)
+        .fold(1, |mut r, (n, d)| { r *= n; r /= d; r })
 }
