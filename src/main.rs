@@ -4,6 +4,7 @@ use rand::Rng;
 use rayon::prelude::*;
 use array_macro::*;
 use chrono::{Utc, Local, DateTime, Date};
+use std::ops::Range;
 
 #[derive(Copy, Clone)]
 struct Duelist {
@@ -75,6 +76,8 @@ fn main() {
     const IDEAL_WINNING_PERCENTAGES_MATRIX_FILENAME: &str = "ideal_winning_percentages_matrix.csv";
     const REAL_WINNING_PERCENTAGES_MATRIX_FILENAME:&str = "real_winning_percentages_matrix.csv";
     const RESULTS_FILENAME:&str = "resutls.csv";
+
+    const NUM_OF_EVALUATION: Range<i32> = (3..4);
     const NUM_OF_PARTICIPANTS: usize = 30;
     const NUM_OF_SIMURATION: usize = 100;
 
@@ -85,16 +88,13 @@ fn main() {
     wtr.write_record(SimulationResult::toHeaderString().iter().map(|x| x.to_string())).expect("Fail to write results");;
 
     // チューニング対象パラメータ
-    for num_of_evaluate in 1..5 {
-        for _probability_of_random_select in 0..11 {
-            for _reward_winner in 1..41 {
-                for _reward_loser in 1..41 {
-                    let probability_of_random_select = _probability_of_random_select as f64 / 10.0;
-                    let reward_winner = _reward_winner as f64 / 10.0;
-                    let reward_loser = _reward_loser as f64 / 10.0;
-
-                    let mut nDCGs: Vec<f64> = vec![];
-                    nDCGs.reserve(NUM_OF_SIMURATION);
+    for num_of_evaluate in NUM_OF_EVALUATION {
+        for _probability_of_random_select in 0..300 {
+            for _reward_winner in 1..500 {
+                for _reward_loser in 1..500 {
+                    let probability_of_random_select = _probability_of_random_select as f64 / 1000.0;
+                    let reward_winner = _reward_winner as f64 / 100.0;
+                    let reward_loser = _reward_loser as f64 / 100.0;
 
                     let sum_nDCG = (0..NUM_OF_SIMURATION).collect::<Vec<_>>().par_iter().map(|&x| {
                         // シミュレーション用データ
