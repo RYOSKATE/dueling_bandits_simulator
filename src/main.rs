@@ -95,7 +95,8 @@ fn main() {
 
                     let mut nDCGs: Vec<f64> = vec![];
                     nDCGs.reserve(NUM_OF_SIMURATION);
-                    for _simulation in 0..NUM_OF_SIMURATION {
+
+                    let sum_nDCG = (0..NUM_OF_SIMURATION).collect::<Vec<_>>().par_iter().map(|&x| {
                         // シミュレーション用データ
                         let ideal_winning_percentages_matrix = make_random_matrix_data(NUM_OF_PARTICIPANTS, 50.0, 16.0);
                         let mut real_winning_percentages_matrix = vec![vec![None; NUM_OF_PARTICIPANTS]; NUM_OF_PARTICIPANTS];
@@ -276,12 +277,14 @@ fn main() {
                         // for duelist in duelists.iter() {
                         //     println!("{},{},{}", duelist.submission_order, duelist.ideal_borda_score, duelist.real_borda_score);
                         //}
-                        nDCGs.push(nDCG);
+
+                        // nDCGs.push(nDCG);
+                        nDCG
 
                         //write_matrix_to_csv(&ideal_winning_percentages_matrix, IDEAL_WINNING_PERCENTAGES_MATRIX_FILENAME).expect("Fail to write ideal_winning_percentages_matrix");
                         //write_matrix_to_csv(&real_winning_percentages_matrix, REAL_WINNING_PERCENTAGES_MATRIX_FILENAME).expect("Fail to write real_winning_percentages_matrix");
-                    }
-                    let average_nDCG: f64 = nDCGs.iter().sum::<f64>() / (nDCGs.len() as f64);
+                    }).sum::<f64>();
+                    let average_nDCG: f64 = sum_nDCG / (NUM_OF_SIMURATION as f64);
                     // println!("average_nDCG={}", average_nDCG);
                     let time = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
                     let result = SimulationResult::new(time, num_of_evaluate, probability_of_random_select, reward_winner, reward_loser, average_nDCG);
