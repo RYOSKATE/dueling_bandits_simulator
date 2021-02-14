@@ -3,6 +3,7 @@ use rand::thread_rng;
 use rand::Rng;
 use rayon::prelude::*;
 use array_macro::*;
+use chrono::{Utc, Local, DateTime, Date};
 
 #[derive(Copy, Clone)]
 struct Duelist {
@@ -27,8 +28,9 @@ impl Duelist {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 struct SimulationResult {
+    time: String,
     num_of_evaluate: i32,
     probability_of_random_select: f64,
     reward_winner: f64,
@@ -37,11 +39,23 @@ struct SimulationResult {
 }
 
 impl SimulationResult {
-    pub fn print(&self) {
-        println!("1人の評価数={}, ランダム対戦の割合={}, 勝者の報酬={}, 敗者の報酬={}, nDCG={}", self.num_of_evaluate, self.probability_of_random_select, self.reward_winner, self.reward_loser, self.nDCG);
+    pub fn new(time: impl Into<String>, num_of_evaluate: i32, probability_of_random_select: f64,
+               reward_winner: f64, reward_loser: f64, nDCG: f64,) -> SimulationResult {
+        SimulationResult { time: time.into(),num_of_evaluate,probability_of_random_select, reward_winner,reward_loser,nDCG }
     }
-    pub fn toHeaderString() -> [&'static str;5]  {
-        return ["1人の評価数","ランダム対戦の割合","勝者の報酬","敗者の報酬","nDCG"];
+    pub fn print(&self) {
+        println!("{}, 1人の評価数={}, ランダム対戦の割合={}, 勝者の報酬={}, 敗者の報酬={}, nDCG={}", self.time, self.num_of_evaluate, self.probability_of_random_select, self.reward_winner, self.reward_loser, self.nDCG);
+    }
+    pub fn toHeaderString() -> [&'static str;6]  {
+        return ["時刻","1人の評価数","ランダム対戦の割合","勝者の報酬","敗者の報酬","nDCG"];
+    }
+    pub fn toStrings(&self) -> [String; 6] {
+        return [self.time.to_string(),
+            self.num_of_evaluate.to_string(),
+            self.probability_of_random_select.to_string(),
+            self.reward_winner.to_string(),
+            self.reward_loser.to_string(),
+            self.nDCG.to_string()];
     }
 }
 
@@ -71,10 +85,10 @@ fn main() {
     wtr.write_record(SimulationResult::toHeaderString().iter().map(|x| x.to_string())).expect("Fail to write results");;
 
     // チューニング対象パラメータ
-    for num_of_evaluate in 1..4 {
+    for num_of_evaluate in 1..5 {
         for _probability_of_random_select in 0..11 {
-            for _reward_winner in 1..31 {
-                for _reward_loser in 1..31 {
+            for _reward_winner in 1..41 {
+                for _reward_loser in 1..41 {
                     let probability_of_random_select = _probability_of_random_select as f64 / 10.0;
                     let reward_winner = _reward_winner as f64 / 10.0;
                     let reward_loser = _reward_loser as f64 / 10.0;
@@ -105,88 +119,75 @@ fn main() {
                         // nが増える＝新たな提出者＆評価(+1は最後の一人提出後の先生評価)
                         for n in 2..NUM_OF_PARTICIPANTS + 1 {
                             let mut matchups_table = vec![vec![false; n]; n];
+                            for i in 0..n {
+                                matchups_table[i][i] = true;
+                            }
+                            // 既存提出者の番号
+                            let mut target_list:Vec<usize> = vec![];
+                            for i in 0..n {
+                                target_list.push(i);
+                            }
                             for _round in 0..num_of_evaluate {
-
-                                // 比較回数が組み合わせの総数より多くなる場合は終了
-                                if n == 2 && 1 <= _round {
-                                    break;
-                                } else if n == 3 && 3 <= _round {
-                                    break;
-                                } else if n == 4 && 6 <= _round {
-                                    break;
-                                } else if n == 5 && 10 <= _round {
-                                    break;
-                                }
-                                // 1人に10回以上比較させることはまず無いのでここまで。
-
                                 // ボルダ勝者用ThompsonSampling法で組み合わせを決定
                                 let (left, _right) = num_of_fights.split_at(n);
-                                let mut duelist1: Option<usize>;
-                                let mut duelist2: Option<usize>;
+                                let mut duelist1: Option<usize> = None;
+                                let mut duelist2: Option<usize> = None;
 
-                                loop {
-                                    duelist1 = None;
-                                    duelist2 = None;
-                                    // 未比較の決闘者なら最優先で選ばれる
-                                    for (i, &v) in left.iter().enumerate() {
-                                        if v == 0 {
-                                            if duelist1 == None {
-                                                duelist1 = Some(i);
-                                            } else if duelist2 == None {
-                                                duelist2 = Some(i);
-                                                break;
-                                            }
+                                // 未比較の決闘者なら最優先で選ばれる
+                                for (i, &v) in left.iter().enumerate() {
+                                    if v == 0 {
+                                        if duelist1 == None {
+                                            duelist1 = Some(i);
+                                        } else if duelist2 == None {
+                                            duelist2 = Some(i);
+                                            break;
                                         }
-                                    }
-
-                                    // 未比較の決闘者が0もしくは1つだけだった場合
-                                    if duelist1 == None || duelist2 == None {
-
-                                        // 比較する2つの決闘者を選ぶ
-                                        if rng.gen::<f64>() <= probability_of_random_select {
-                                            // 完全にランダムで選ぶ場合
-                                            if duelist1 == None {
-                                                duelist1 = Some(rng.gen_range(0, n));
-                                            }
-                                            while duelist2 == None || duelist1 == duelist2 {
-                                                duelist2 = Some(rng.gen_range(0, n));
-                                            }
-                                        } else {
-                                            // 過去の情報に基づいて選ぶ場合
-                                            if duelist1 == None {
-                                                let mut sample = 0.0;
-                                                for i in 0..n {
-                                                    let beta = Beta::new(duelists[i].alpha, duelists[i].beta);
-                                                    let v = beta.sample(&mut thread_rng());
-                                                    if sample < v {
-                                                        sample = v;
-                                                        duelist1 = Some(i);
-                                                    }
-                                                }
-                                            }
-                                            while duelist2 == None || duelist1 == duelist2 {
-                                                let mut sample = 0.0;
-                                                for i in 0..n {
-                                                    let beta = Beta::new(duelists[i].alpha, duelists[i].beta);
-                                                    let v = beta.sample(&mut thread_rng());
-                                                    if sample < v {
-                                                        sample = v;
-                                                        duelist2 = Some(i);
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    // 決定した組み合わせで比較実施
-                                    let duelist1 = duelist1.unwrap();
-                                    let duelist2 = duelist2.unwrap();
-
-                                    // その人が既に評価済みの組み合わせは選ばない
-                                    if !matchups_table[duelist1][duelist2] {
-                                        break;
                                     }
                                 }
+
+                                let is_use_random = rng.gen::<f64>() <= probability_of_random_select;
+
+                                // 未比較の決闘者が2人居なかった場合
+                                if duelist1 == None {
+                                    // 比較する2つの決闘者を選ぶ
+                                    if is_use_random {
+                                        // 完全にランダムで選ぶ場合
+                                        duelist1 = Some(target_list[rng.gen_range(0, target_list.len())]);
+                                    } else {
+                                        // 過去の情報に基づいて選ぶ場合
+                                        let mut sample = 0.0;
+                                        for &i in target_list.iter() {
+                                            let beta = Beta::new(duelists[i].alpha, duelists[i].beta);
+                                            let v = beta.sample(&mut thread_rng());
+                                            if sample < v {
+                                                sample = v;
+                                                duelist1 = Some(i);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if duelist2 == None {
+                                    let mut target_list2 = target_list.clone();
+                                    target_list2.retain(|&x| x != duelist1.unwrap());
+                                    // 比較する2つの決闘者を選ぶ
+                                    if is_use_random {
+                                        // 完全にランダムで選ぶ場合
+                                        duelist2 = Some(target_list2[rng.gen_range(0, target_list2.len())]);
+                                    } else {
+                                        // 過去の情報に基づいて選ぶ場合
+                                        let mut sample = 0.0;
+                                        for &i in target_list2.iter() {
+                                            let beta = Beta::new(duelists[i].alpha, duelists[i].beta);
+                                            let v = beta.sample(&mut thread_rng());
+                                            if sample < v {
+                                                sample = v;
+                                                duelist2 = Some(i);
+                                            }
+                                        }
+                                    }
+                                }
+
                                 // 決定した組み合わせで比較実施
                                 let duelist1 = duelist1.unwrap();
                                 let duelist2 = duelist2.unwrap();
@@ -205,6 +206,16 @@ fn main() {
                                     duelists[duelist2].alpha += reward_winner;
                                     duelists[duelist1].beta += reward_loser;
                                     real_duel_results_table[duelist2][duelist1] += 1;
+                                }
+
+                                //他の全員と対戦済みのduelistは候補から除外
+                                for (i,matchups) in matchups_table.iter().enumerate() {
+                                    if matchups.iter().all(|&b| b) {
+                                        target_list.retain(|&x| x != i);
+                                    }
+                                }
+                                if target_list.len() <= 1 {
+                                    break;
                                 }
                             }
                         }
@@ -272,14 +283,11 @@ fn main() {
                     }
                     let average_nDCG: f64 = nDCGs.iter().sum::<f64>() / (nDCGs.len() as f64);
                     // println!("average_nDCG={}", average_nDCG);
-                    let result = SimulationResult { num_of_evaluate, probability_of_random_select, reward_winner, reward_loser, nDCG: average_nDCG };
-                    result.print();
+                    let time = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+                    let result = SimulationResult::new(time, num_of_evaluate, probability_of_random_select, reward_winner, reward_loser, average_nDCG);
                     results.push(result);
-                    wtr.write_record(&[result.num_of_evaluate.to_string(),
-                        result.probability_of_random_select.to_string(),
-                        result.reward_winner.to_string(),
-                        result.reward_loser.to_string(),
-                        result.nDCG.to_string()]).expect("Fail to write result");
+                    results.last().unwrap().print();
+                    wtr.write_record(&results.last().unwrap().toStrings()).expect("Fail to write result");
                     wtr.flush().expect("Fail to flush results");
                 }
             }
