@@ -77,7 +77,10 @@ fn main() {
     const REAL_WINNING_PERCENTAGES_MATRIX_FILENAME:&str = "real_winning_percentages_matrix.csv";
     const RESULTS_FILENAME:&str = "resutls.csv";
 
-    const NUM_OF_EVALUATION: Range<i32> = (3..4);
+    const NUM_OF_EVALUATION_RANGE: Range<i32> = (3..4);
+    const NUM_OF_PROBABILITY_OF_RANDOM_SELECT_RANGE: Range<i32> = (0..2);
+    const NUM_OF_REWARD_WINNER_RANGE: Range<i32> = (1..11);
+    const NUM_OF_REWARD_LOSER_RANGE: Range<i32> = (5..51);
     const NUM_OF_PARTICIPANTS: usize = 30;
     const NUM_OF_SIMURATION: usize = 100;
 
@@ -88,15 +91,15 @@ fn main() {
     wtr.write_record(SimulationResult::toHeaderString().iter().map(|x| x.to_string())).expect("Fail to write results");;
 
     // チューニング対象パラメータ
-    for num_of_evaluate in NUM_OF_EVALUATION {
-        for _probability_of_random_select in 0..300 {
-            for _reward_winner in 1..500 {
-                for _reward_loser in 1..500 {
-                    let probability_of_random_select = _probability_of_random_select as f64 / 1000.0;
-                    let reward_winner = _reward_winner as f64 / 100.0;
-                    let reward_loser = _reward_loser as f64 / 100.0;
+    for num_of_evaluate in NUM_OF_EVALUATION_RANGE {
+        for _probability_of_random_select in NUM_OF_PROBABILITY_OF_RANDOM_SELECT_RANGE {
+            for _reward_winner in NUM_OF_REWARD_WINNER_RANGE {
+                for _reward_loser in NUM_OF_REWARD_LOSER_RANGE {
+                    let probability_of_random_select = 0.05;
+                    let reward_winner = 0.5;
+                    let reward_loser = 5.2;
 
-                    let sum_nDCG = (0..NUM_OF_SIMURATION).collect::<Vec<_>>().par_iter().map(|&x| {
+                    let sum_nDCG = (0..NUM_OF_SIMURATION).collect::<Vec<_>>().iter().map(|&x| {
                         // シミュレーション用データ
                         let ideal_winning_percentages_matrix = make_random_matrix_data(NUM_OF_PARTICIPANTS, 50.0, 16.0);
                         let mut real_winning_percentages_matrix = vec![vec![None; NUM_OF_PARTICIPANTS]; NUM_OF_PARTICIPANTS];
@@ -271,12 +274,12 @@ fn main() {
                         let iDCG = calc_DCG(&duelists);
 
                         let nDCG = rDCG / iDCG;
-                        // println!("rDCG={}, iDCG={}, nDCG={}", rDCG, iDCG, nDCG);
-                        //
-                        // println!("#,ideal_borda_score,real_borda_score");
-                        // for duelist in duelists.iter() {
-                        //     println!("{},{},{}", duelist.submission_order, duelist.ideal_borda_score, duelist.real_borda_score);
-                        //}
+                        println!("rDCG={}, iDCG={}, nDCG={}", rDCG, iDCG, nDCG);
+
+                        println!("#,ideal_borda_score,real_borda_score");
+                        for duelist in duelists.iter() {
+                            println!("{},{},{}", duelist.submission_order, duelist.ideal_borda_score, duelist.real_borda_score);
+                        }
 
                         // nDCGs.push(nDCG);
                         nDCG
